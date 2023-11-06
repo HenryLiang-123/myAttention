@@ -5,7 +5,7 @@ Repo for my implementation of multiheaded attention from the original paper Atte
 
 I did not invent this. This is me trying to understand the encoder-decoder architecture.
 
-## References and Acknowledgements
+## References
 
 [Code](https://www.youtube.com/watch?v=U0s0f995w14)
 
