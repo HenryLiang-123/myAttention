@@ -94,5 +94,82 @@ class TransformerBlock(nn.Module):
         out = self.dropout(self.norm2(forward + x))
         return out
 
+class Encoder(nn.Module):
+    def __init__(self, src_vocab_size, embed_size, layers, heads, device, forward_expansion, dropout, max_length):
+        super(Encoder, self).__init__()
+        self.embed_size = embed_size
+        self.device = device
+        self.word_embedding = nn.Embedding(src_vocab_size, embed_size)
+        self.positional_embedding = nn.Embedding(max_length, embed_size)
 
+        self.layers = nn.ModuleList(
+            [
+                TransformerBlock(embed_size, heads, dropout, forward_expansion)
 
+            ]
+
+        )
+
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, mask):
+        '''
+        This part is the feed forward part of the encoder before the attention block        
+        '''
+        N, seq_len = x.shape
+        positions = torch.arange(0, seq_len).expand(N, seq_len).to(self.device)
+
+        out = self.dropout(self.word_embedding(x) + self.positional_embedding(positions))
+
+        for layer in self.layers:
+            out = layer(out, out, out, mask) # Feed forward in the Transformer block takes in Q, K, V, which are all calculated from `out`
+
+        return out
+    
+class DecoderBlock(nn.Module):
+    def __init__(self, embed_size, heads, forward_expansion, dropout, device):
+        super(DecoderBlock, self).__init__()
+        self.attention = SelfAttention(embed_size, heads)
+        self.norm = nn.LayerNorm(embed_size)
+        self.transformer_block = TransformerBlock(embed_size, heads, dropout, forward_expansion)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, value, key, src_mask, trg_mask):
+        attention = self.attention(x, x, x, trg_mask) # Self attention block
+        query = self.dropout(self.norm(attention + x)) # Add attention values to input of (word embedding + positional encoding)
+        out = self.transformer_block(value, key, query, src_mask) # Set up for encoder-decoder attention since query is from decoder, and value and key are from econder
+
+        return out
+    
+class Decoder(nn.Module):
+    def __init__(self, trg_vocab_size, embed_size, num_layers, heads, device, forward_expansion, dropout, max_length):
+        super(Decoder, self).__init__()
+        self.device = device
+        self.word_embedding = nn.Embedding(trg_vocab_size, embed_size)
+        self.positional_embedding = nn.Embedding(max_length, embed_size)
+
+        self.layers = nn.ModuleList(
+            [DecoderBlock(embed_size, heads, forward_expansion, dropout, device) for _ in range(num_layers)]
+        )
+
+        self.fc_out = nn.Linear(embed_size, trg_vocab_size)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, encoder_out, src_mask, trg_mask):
+        '''
+        x: target sequence
+        encoder_out: output from encoder
+        src_mask: source mask for the encoder output
+        trg_mask: target mask to prevent future information from being used
+        '''
+        N, seq_len = x.shape
+        positions = torch.arange(0, seq_len).expand(N, seq_len).to(self.device)
+        x = self.dropout((self.word_embedding(x) + self.positional_embedding(positions)))
+
+        for layer in self.layers:
+            # encoder-decoder attention. Q comes from decoder, K, V come from encoder
+            # already has self attention built into the layer since we're calling a DecoderBlock
+            x = layer(x, encoder_out, encoder_out, src_mask, trg_mask) 
+
+        out = self.fc_out(x)
+        return out
